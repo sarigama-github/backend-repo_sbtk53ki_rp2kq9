@@ -1,6 +1,8 @@
 import os
-from fastapi import FastAPI
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import requests
 
 app = FastAPI()
 
@@ -63,6 +65,71 @@ def test_database():
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+GITHUB_API = "https://api.github.com"
+
+
+def _github_headers() -> dict:
+    token = os.getenv("GITHUB_TOKEN")
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+@app.get("/api/github/profile")
+def get_github_profile(username: str):
+    """Fetch GitHub profile details for a username"""
+    url = f"{GITHUB_API}/users/{username}"
+    r = requests.get(url, headers=_github_headers(), timeout=10)
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.json().get("message", "Failed to fetch profile"))
+    data = r.json()
+    # Normalize minimal fields we care about
+    profile = {
+        "login": data.get("login"),
+        "name": data.get("name") or data.get("login"),
+        "avatar_url": data.get("avatar_url"),
+        "bio": data.get("bio"),
+        "location": data.get("location"),
+        "blog": data.get("blog"),
+        "html_url": data.get("html_url"),
+        "followers": data.get("followers"),
+        "following": data.get("following"),
+        "public_repos": data.get("public_repos"),
+        "company": data.get("company"),
+        "twitter_username": data.get("twitter_username"),
+        "hireable": data.get("hireable"),
+    }
+    return profile
+
+
+@app.get("/api/github/repos")
+def get_github_repos(username: str, per_page: int = 12, sort: str = "updated"):
+    """Fetch public repositories for a username"""
+    url = f"{GITHUB_API}/users/{username}/repos"
+    params = {"per_page": per_page, "sort": sort, "type": "owner"}
+    r = requests.get(url, params=params, headers=_github_headers(), timeout=10)
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.json().get("message", "Failed to fetch repos"))
+    repos = []
+    for repo in r.json():
+        repos.append({
+            "id": repo.get("id"),
+            "name": repo.get("name"),
+            "full_name": repo.get("full_name"),
+            "html_url": repo.get("html_url"),
+            "description": repo.get("description"),
+            "language": repo.get("language"),
+            "stargazers_count": repo.get("stargazers_count"),
+            "forks_count": repo.get("forks_count"),
+            "updated_at": repo.get("updated_at"),
+            "homepage": repo.get("homepage"),
+            "topics": repo.get("topics", []),
+            "archived": repo.get("archived"),
+            "visibility": repo.get("visibility"),
+        })
+    return {"count": len(repos), "items": repos}
 
 
 if __name__ == "__main__":
